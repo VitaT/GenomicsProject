@@ -1,0 +1,317 @@
+---
+title: "REHH"
+author: "Vita"
+date: "April 30, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(rehh)
+```
+
+Current Questions:
+* 
+* when comparing different populations should we compare only SNP that are in all the populations? ( if we use 100 % filtering that does not mean we select the same SNP, right? because in WE all SNP have 100 coverage and other populations only 25 percent of SNP have 100 % coverage.) or for each pair of populations should I find an unique set of overlaping SNP positions
+* (in ihh2ihs function) how to select frequency bins? why are the default ones changed when we did the exercise?
+* should we use 100 percent filtering? (ehh calculation stops when haplotype has SNP with NA value...)
+
+* visualise which positions on whole X chromosome have SNP called 100 %?. can add to 100 kb windows. (would be quite nice actually)
+
+
+NOTES:
+* *why exactly do we say that extended haplotypes* i.e. recombination does not happen there is a *sign of selection*? is it because it is less likely that recombination will improve the fitness and so we expect selection to act against recombinant haplotypes  -- they just die or do not propogate... 
+* Yes, the *incomplete lineage sorting stuff* -- how can we be sure, that what we call ancestrial allele is trully ancestrial. As I know now the phasing usses only 1 sequence, right? so how can we be sure not to call ancestrial alleles that are actually IBS i.e. because of mutations at the same position in 2 different species after the speciation event. And in incomplete lineage sorting case -- we see that human allele is the same as gorrila, but different from chimpanze. This can happen because of (a) IBS in gorrila and human i.e. 2 mutations and chimpanzee is trully ancestrial (b) new mutation in chimpanzee and gorrila + human are the ancestrial ones (c) incomplete lineage sorting between chimpazee and gorrila and both variants were pressent in ancient populations... i.e. they are both ancestrial in a sense... and we should look at even more ancient species for true ancestrieal allele?... Yeah, I just got more and more confused with this stuff.
+* I do not truly understand the EHHS_tang. How it is calculated.
+* What does iHH value Show us and how should we interpret it? or is it just a stepping stone so we could compare different SNP s and the extended haplotype probability relative to that SNP s. I think that is it. We calc combined probability get the area under the probability curve under the probability is small enough (threshold). Then we take the ratio for that SNP s for derived and ancestrial allele ( *WHAT DOES IT SHOW US REALLY?*), then we normalize ratio log function and standardize it with (-mean) and (/sd). *But why mean from binned SNP?* and then our statistics should in theory follows a normal gaussian distribution, so we can say that expected statistics distribution in gaussian -- we know how to calculate that. And we get our observed distribution from data. Then we can compare then and actually get a P-value. (*should look up what that gaussian cumulative distribution function is and how we use it in this context*)
+* and that is basically the same what we do for pairwise test between populations. Just we are using EHHS statistics: Sab and Tang, and respectively get ratio normalized and standardized statistis Rsb (for Sab) and xpEHH (for Tang).
+* EHHs -- combination of haplotype extention considering both alleles at the same time? As they say in the vignette -- weighted linear model dependend on allele frequency. (I kinda get how Sab is calculated, but not Tang.)
+
+
+```{r paths}
+input <- "../input/"
+output <- "../output/"
+pic_path <- "../graphs/"
+```
+
+
+```{r import_Data}
+
+# Reading the data for each population:
+# wrapper for each population 
+read_genotype <- function(genotype_file, snp_file, min.perc.snp, min.perc.hap, ...) {
+data2haplohh(hap_file = genotype_file, 
+                             map_file = snp_file,
+                             recode.allele = TRUE, 
+                             min_perc_geno.snp = min.perc.snp,
+                             min_perc_geno.hap = min.perc.hap,
+                             haplotype.in.columns = TRUE,
+                             chr.name = 1)
+}
+snp_file <- paste0(input, "snps_filtered")
+
+
+## loop to see how many SNP are lost using different filtering
+# res_retain_SNP <- list()
+# for (i in seq(0, 100, by = 10)) {
+#   name <- paste0("snp.filter:", i)
+#   print(name)
+#   dAF <- read_genotype( paste0(input, "genotypes_AF"), snp_file, i, 20)  
+#   res_retain_SNP[[name]] <- dAF@nsnp
+# }
+# 
+# data.frame(n_snp = unlist(res_retain_SNP), 
+#            filt = sapply(names(res_retain_SNP), sub, pattern = "snp.filter:", replacement = "") %>% as.numeric(), 
+#            n_snp_perc = unlist(res_retain_SNP) / res_retain_SNP[[1]] * 100) %>%
+#   ggplot(aes(filt, n_snp_perc)) + 
+#     geom_point()
+## looks like even 10 percent filtering leaves about 40 percent of SNP. And then it slowly descends to around 30 until 100 percent filtering is used.
+## that means, that ~ 60 of SNP in AF, EA and SA are very poorly called SNPs and have a lot of missing data in all the samples (except WE pop -- somehow, all are perfectly called there). And if SNP is called in 10 % of samples or 90 % -- not much difference, so let's take higher quality stuff. 90 % it is (100 % I think is too stringent)
+## alternative: maybe at least 50 % i.e at least half of the population has SNP called
+
+## when I use higher than 35 haplotype filtering -- all haplotypes become discarded.
+## However, I think it does not matter that we have some SNP in individuals that are not called. That is to be expected, as there are a lot of SNP at the end of chromosome is just not called at all (also repeated regions). I think 20 % of missing data is good enough filter for individual
+
+
+dAF <- read_genotype( paste0(input, "genotypes_AF"), snp_file, 90, 20)  # african 
+dEA <- read_genotype( paste0(input, "genotypes_EA"), snp_file, 90, 20)   # east asia
+dSA <- read_genotype( paste0(input, "genotypes_SA"), snp_file, 90, 20)   # south asia
+dWE <- read_genotype( paste0(input, "genotypes_WE"), snp_file, 90, 20)   # west europe
+# dO <- read_genotype( paste0(input, "genotypes_O"), snp_file, 90, 20)   # ociania?
+# dAM <- read_genotype( paste0(input, "genotypes_AM"), snp_file, 90, 20)   # america?
+# dCAS <- read_genotype( paste0(input, "genotypes_CAS"), snp_file, 90, 20)   # casss???
+
+
+```
+
+
+```{r hh_scan}
+
+## calculating hh statistics for 4 populations
+hh_AF <- scan_hh(dAF, threads = 3)
+hh_EA <- scan_hh(dEA, threads = 3)
+hh_SA <- scan_hh(dSA, threads = 3)
+hh_WE <- scan_hh(dWE, threads = 3)
+# hh_O <- scan_hh(dO, threads = 3)
+# hh_AM <- scan_hh(dAM, threads = 3)
+# hh_CAS <- scan_hh(dCAS, threads = 3)
+
+
+## saving hh_scan results (scan_hh takes a lot time. Do not want to repeat)
+## file name table -- dFile_list
+pop_list <- c("AF", "EA", "SA", "WE")
+#pop_list <- c("AF", "EA", "SA", "WE", "O", "AM", "CAS")
+dFile_list <- data.frame(data_name = paste0("hh_", pop_list)) %>%
+	mutate(save_name = paste0("scan_", data_name))
+
+## loop to save files based on dFile_list input
+for (i in seq_len(nrow(dFile_list))) {
+  Data_name <- dFile_list[i, 1] %>% as.character()
+  save_file_name <- paste0(output, dFile_list[i, 2], ".RDS")
+  print(paste0(Data_name, " saved as: ", save_file_name))
+  saveRDS(get(Data_name), file = save_file_name)
+}
+```
+
+
+```{r between_population_test_UNFINISHED}
+hh_AF <- readRDS(file = paste0(output, "scan_hh_AF.RDS"))
+hh_EA <- readRDS(file = paste0(output, "scan_hh_EA.RDS"))
+hh_SA <- readRDS(file = paste0(output, "scan_hh_SA.RDS"))
+hh_WE <- readRDS(file = paste0(output, "scan_hh_WE.RDS"))
+# hh_O <- readRDS(file = paste0(output, "scan_hh_O.RDS"))
+# hh_AM <- readRDS(file = paste0(output, "scan_hh_AM.RDS"))
+# hh_CAS <- readRDS(file = paste0(output, "scan_hh_CAS.RDS"))
+#  
+######################################################################
+
+## after SNP filtering durring data import, we are left with different number of SNP in each populations. And to compare haplotypes between populations we need that SNP to be present in both populations
+## 
+nSnpLeft <- c(nrow(hh_AF), nrow(hh_EA), nrow(hh_SA), nrow(hh_WE)) 
+which.min(nSnpLeft)
+
+## let's see how many overlap in all populations:
+## because it is only 1 chromosome, so position should be sufficient to identify differnet 
+select_rownames <- intersect(rownames(hh_AF), rownames(hh_EA)) %>%
+    intersect(rownames(hh_SA)) %>%
+    intersect(rownames(hh_WE))
+length(select_rownames) / min(nSnpLeft)
+
+
+select_rownames <- intersect(rownames(hh_AF), rownames(hh_EA)) 
+hh_AF[rownames(hh_AF) %in% select_rownames , ] %>% dim()
+hh_EA[rownames(hh_EA) %in% select_rownames , ] %>% dim()
+nrow()
+length(select_rownames)
+table(rownames(hh_AF) %in% select_rownames)
+head(hh_AF)
+
+## Rbs-based test between populations
+## bilateral test
+rsb_AF_EA <- ies2rsb(hh_AF, hh_EA, "AF", "EA")
+str(cguVSeut.rsb)
+head(cguVSeut.rsb)
+
+```
+
+```{r within_pop_test_iHS}
+
+# NOTE: maybe I can somehow combine that stuff for all populations without copying?
+## but on the other hand +4 copies... still manageable.
+# NOTE: HOW TO HELL TO DEAL WITH THOSE popping plots...
+
+
+## performing ihs scan. Within pop test
+ihs_AF <- ihh2ihs(hh_AF, freqbin = 0.025)   
+ihs_EA <- ihh2ihs(hh_EA, freqbin = 0.05)
+ihs_SA <- ihh2ihs(hh_SA, freqbin = 0.05)
+ihs_WE <- ihh2ihs(hh_WE, freqbin = 0.05)
+
+ihsplot(ihs_AF, plot.pval = TRUE, main = "AF")
+ihsplot(ihs_EA, plot.pval = TRUE, main = "EA")
+ihsplot(ihs_SA, plot.pval = TRUE, main = "SA")
+ihsplot(ihs_WE, plot.pval = TRUE, main = "WE")
+
+## 10 most significant sites
+i <- pop_list[1]
+pop_list
+most_sig_ihs_sites <- list()
+for (i in pop_list) {
+  Data_name <- paste0("ihs_", i)
+  most_sig_ihs_sites[[i]] <- arrange(get(Data_name)[[1]], desc(`-log10(p-value)`)) %>%
+  head(n = 10)
+}
+
+extractPos <- sapply(most_sig_ihs_sites, function(x) x[, 2])   # extract positions
+extractP_val <- sapply(most_sig_ihs_sites, function(x) x[, 4])   # extract p-values
+
+
+## how many SNP overlap between populations
+as.vector(extractPos) %>% unique()
+## wow... really... none (for AF, EA, SA, WE pop at least)
+
+## minimal value of all selected significant SNPs:
+as.vector(extractP_val) %>% min()
+## not that bad... 4.6 -log P-value (for AF, EA, SA, WE pop)
+
+
+```
+
+```{r bifurcation_plots}
+one_snp_pos <- extractPos[1, 1]
+num_SNP <- which(dAF@position == one_snp_pos)
+bifurcation.diagram(dAF, 
+                    mrk_foc = num_SNP, 
+                    all_foc = 2,
+                    nmrk_l = 20,
+                    nmrk_r = 20, 
+                    main = paste0("pos: ", one_snp_pos, " : Derived Allele"))
+bifurcation.diagram(dAF, 
+                    mrk_foc = num_SNP, 
+                    all_foc = 1,
+                    nmrk_l = 20,
+                    nmrk_r = 20, 
+                    main = paste0("pos: ", one_snp_pos, " : Ancestrial Allele"))
+## ERROR:
+## ancestrial allele in this position have very less haplotypes then threshold, so cannot draw that
+dev.new()
+one_snp_pos <- extractPos[10, 1]
+num_SNP <- which(dAF@position == one_snp_pos)
+bifurcation.diagram(dAF, 
+                    mrk_foc = num_SNP, 
+                    all_foc = 2,
+                    nmrk_l = 100,
+                    nmrk_r = 200, 
+                    main = paste0("pos: ", one_snp_pos, " : Derived Allele"))
+# If I increase the distance then the minimal number of haplotypes, that have the core allele at focal SNP, is lower than the threshold...
+## but why exactly? shouldn't it still contain the same number of haplotypes with our allele of interest, no matter how much we extend the haplotype? I agree, that the number of unigue haplotypes decreases (with allele of interest in s SNP), but the complete number of haplotypes (with allele of interest in s SNP) should stay the same, right?
+## ANSWER:
+dAF@haplo[dAF@haplo[, num_SNP] == 2, ] %>% dim()
+haplo_r <- dAF@haplo[dAF@haplo[, num_SNP] == 2, ][, (num_SNP + 1):(num_SNP + 200)]
+haplo_r <- haplo_r[ rowSums(haplo_r == 0) == 0, ]   # find which samples  have missing data and only take those that DO NOT have missing data for all the region you selected
+## threshold for minimal haplotype with As number i.w. n_as:
+limhapcount <- 10   # default
+if (nrow(haplo_r) < limhapcount ) {stop("Number of available haplotypes on the right lower than limhapcount")}
+## the more you extend the haplotype -- in this X chromosome case, the more NA values you get and in the begining we do not have a lot of haplotypes, so NA values just reduce our long extended haplotype below the threshold
+## plot with changed default haplotype number threshold
+bifurcation.diagram(dAF, 
+                    mrk_foc = num_SNP, 
+                    all_foc = 2,
+                    nmrk_l = 100,
+                    nmrk_r = 200, 
+                    limhapcount = 1,
+                    main = paste0("pos: ", one_snp_pos, " : Derived Allele"))
+
+```
+
+
+
+```{r within pop tes result plot}
+
+## 10 most significant snp
+pop_list <- c("AF", "EA", "SA", "WE", "O", "AM", "CAS")
+i <- pop_list[1]
+most_sig_ihs_sites <- list()
+for (i in pop_list) {
+  Data_name <- paste0("ihs_", i)
+  most_sig_ihs_sites[[i]] <- arrange(get(Data_name)[[1]], desc(`-log10(p-value)`)) %>%
+  head(n = 10)
+}
+
+extractPos <- sapply(most_sig_ihs_sites, function(x) x[, 2])   # extract positions
+dSigPos <- melt(extractPos) %>% as.data.table()
+dSigPos$chr <- "chrX"
+dSigPos <- dSigPos[, c(4, 3, 3, 2, 1)]
+colnames(dSigPos) <- c("seqnames", "start", "end", "region", "no")
+setkey(dSigPos, seqnames, start, end)
+extractP_val <- sapply(most_sig_ihs_sites, function(x) x[, 4])   # extract p-values
+
+
+## 10 most significant regions?
+## how to identify most significant regions?
+## - take a threshold 
+
+ihs_EA[[1]]
+tmp <- arrange(ihs_EA$iHS, desc(`-log10(p-value)`)) %>% head(n = 10)
+pos <- tmp$POSITION[1]
+gtf_df <- gtf_df[seqnames  == "chrX"]
+filter(gtf_df, start < pos) %>% head()
+
+
+## how many SNP overlap between populations
+as.vector(extractPos) %>% unique() %>% length()
+length(pop_list) * 10
+## wow... really... only 1 SNP overlaps from all positions
+
+## minimal value of all selected significant SNPs:
+as.vector(extractP_val) %>% min()
+## not that bad... 4.6 -log P-value
+
+
+###############################################################################
+ihsplot(ihs_AF, plot.pval = TRUE, main = "AF")
+ihsplot(ihs_EA, plot.pval = TRUE, main = "EA")
+ihsplot(ihs_SA, plot.pval = TRUE, main = "SA")
+ihsplot(ihs_WE, plot.pval = TRUE, main = "WE")
+ihsplot(ihs_O, plot.pval = TRUE, main = "O")
+ihsplot(ihs_AM, plot.pval = TRUE, main = "AM")
+ihsplot(ihs_CAS, plot.pval = TRUE, main = "CAS")
+
+## saving all pictures from open graphical devides
+for (i in dev.list()) {
+  dev.set(i)
+  Name <- paste0(pic_path, "ihsplot", i, ".jpeg")
+  dev.copy(jpeg, Name)
+  dev.off()
+}
+
+
+##################################################################
+## saving significant sites
+write.table(dSigPos, file = paste0(output, "dSigWithin_ihs.txt"), 
+            quote = FALSE, sep = "\t", row.names = FALSE)
+
+```
+

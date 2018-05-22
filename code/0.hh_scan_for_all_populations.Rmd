@@ -1,0 +1,80 @@
+---
+title: "hh_scan for all pop"
+author: "Vita"
+date: "May 2, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rehh)
+library(dplyr)
+library(ggplot2)
+```
+
+
+
+```{r paths}
+input <- "../input/"
+output <- "../output/"
+pic_path <- "../graphs/"
+```
+
+
+```{r import_Data}
+
+# Reading the data for each population:
+# wrapper for each population 
+read_genotype <- function(genotype_file, snp_file, min.perc.snp, min.perc.hap, ...) {
+data2haplohh(hap_file = genotype_file, 
+                             map_file = snp_file,
+                             recode.allele = TRUE, 
+                             min_perc_geno.snp = 100,
+                             min_perc_geno.hap = 100,
+                             haplotype.in.columns = TRUE,
+                             chr.name = 1)
+}
+snp_file <- paste0(input, "snps_filtered")
+
+
+dAF <- read_genotype( paste0(input, "genotypes_AF"), snp_file)  # africa
+dEA <- read_genotype( paste0(input, "genotypes_EA"), snp_file)   # east asia
+dSA <- read_genotype( paste0(input, "genotypes_SA"), snp_file)   # south asia
+dWE <- read_genotype( paste0(input, "genotypes_WE"), snp_file)   # west europe
+dO <- read_genotype( paste0(input, "genotypes_O"), snp_file)   # ociania
+dAM <- read_genotype( paste0(input, "genotypes_AM"), snp_file)   # america
+dCAS <- read_genotype( paste0(input, "genotypes_CAS"), snp_file)   # central asia siberia
+
+
+``` 
+
+
+
+```{r hh_scan}
+
+## calculating hh statistics for 4 populations
+hh_AF <- scan_hh(dAF, threads = 3)
+hh_EA <- scan_hh(dEA, threads = 3)
+hh_SA <- scan_hh(dSA, threads = 3)
+hh_WE <- scan_hh(dWE, threads = 3)
+hh_O <- scan_hh(dO, threads = 3)
+hh_AM <- scan_hh(dAM, threads = 3)
+hh_CAS <- scan_hh(dCAS, threads = 3)
+
+
+## saving hh_scan results (scan_hh takes a lot time. Do not want to repeat)
+## file name table -- dFile_list
+pop_list <- c("AF", "EA", "SA", "WE", "O", "AM", "CAS")
+#pop_list <- c("AF", "EA", "SA", "WE", "O", "AM", "CAS")
+dFile_list <- data.frame(data_name = paste0("hh_", pop_list)) %>%
+	mutate(save_name = paste0("scan_", data_name))
+
+## loop to save files based on dFile_list input
+for (i in seq_len(nrow(dFile_list))) {
+  Data_name <- dFile_list[i, 1] %>% as.character()
+  save_file_name <- paste0(output, dFile_list[i, 2], ".RDS")
+  print(paste0(Data_name, " saved as: ", save_file_name))
+  saveRDS(get(Data_name), file = save_file_name)
+}
+```
+

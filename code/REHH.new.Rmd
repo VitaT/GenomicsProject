@@ -1,0 +1,339 @@
+---
+title: "REHH_new.Rmd"
+author: "Vita"
+date: "May 8, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rehh)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+```
+
+NOTE: 
+* Maybe I should exclude centromere region before taking the significant sites?
+* how to define significant EHH regions. not just SNP.
+
+```{r import data}
+## paths
+input <- "../input/"
+output <- "../output/"
+pic_path <- "../graphs/"
+
+
+# wrapper for each population 
+read_genotype <- function(genotype_file, snp_file, min.perc.snp, min.perc.hap, ...) {
+data2haplohh(hap_file = genotype_file, 
+                             map_file = snp_file,
+                             recode.allele = TRUE, 
+                             min_perc_geno.snp = 100,
+                             min_perc_geno.hap = 100,
+                             haplotype.in.columns = TRUE,
+                             chr.name = 1)
+}
+snp_file <- paste0(input, "snps_filtered")
+
+## raw data (needed for fiburcation plot)
+dAF <- read_genotype( paste0(input, "genotypes_AF"), snp_file)  # africa
+dEA <- read_genotype( paste0(input, "genotypes_EA"), snp_file)   # east asia
+dWE <- read_genotype( paste0(input, "genotypes_WE"), snp_file)   # west europe
+# dSA <- read_genotype( paste0(input, "genotypes_SA"), snp_file)   # south asia
+# dO <- read_genotype( paste0(input, "genotypes_O"), snp_file)   # ociania
+# dAM <- read_genotype( paste0(input, "genotypes_AM"), snp_file)   # america
+# dCAS <- read_genotype( paste0(input, "genotypes_CAS"), snp_file)
+
+
+## hh_scan results
+hh_AF <- readRDS(file = paste0(output, "scan_hh_AF.RDS"))
+hh_EA <- readRDS(file = paste0(output, "scan_hh_EA.RDS"))
+hh_WE <- readRDS(file = paste0(output, "scan_hh_WE.RDS"))
+# hh_SA <- readRDS(file = paste0(output, "scan_hh_SA.RDS"))
+# hh_O <- readRDS(file = paste0(output, "scan_hh_O.RDS"))
+# hh_AM <- readRDS(file = paste0(output, "scan_hh_AM.RDS"))
+# hh_CAS <- readRDS(file = paste0(output, "scan_hh_CAS.RDS"))
+```
+
+
+
+```{r within pop test}
+
+ihs_AF <- ihh2ihs(hh_AF, freqbin = 0.05)  # increased freqbing, because of warning.
+ihs_EA <- ihh2ihs(hh_EA, freqbin = 0.05)
+ihs_WE <- ihh2ihs(hh_WE, freqbin = 0.05)
+# ihs_SA <- ihh2ihs(hh_SA, freqbin = 0.05)
+# ihs_O <- ihh2ihs(hh_O, freqbin = 0.1)   # increased freqbin because of smaller sample size
+# ihs_AM <- ihh2ihs(hh_AM, freqbin = 0.175)   # up freqbin -- smaller sample size
+# ihs_CAS <- ihh2ihs(hh_CAS, freqbin = 0.15)   # up freqbin -- smaller sample size
+
+```
+
+
+```{r plots of between population test}
+
+p_treshold <- 5
+p_treshold <- quantile(ihs_AF$iHS$`-log10(p-value)`, 0.9995, na.rm = TRUE)
+# p_treshold <- quantile(ihs_EA$iHS$`-log10(p-value)`, 0.9995, na.rm = TRUE)
+# p_treshold <- quantile(ihs_WE$iHS$`-log10(p-value)`, 0.9995, na.rm = TRUE)
+
+## selecting SNp by p-value threshold
+AF.ihs.selSNP <- ihs_AF[[1]] %>% 
+  as.data.table() %>%
+  .[ `-log10(p-value)` > p_treshold, ] %>%
+  .[, start := POSITION] %>%
+  .[, end := POSITION]
+EA.ihs.selSNP <- ihs_EA[[1]] %>% 
+  as.data.table() %>%
+  .[ `-log10(p-value)` > p_treshold, ] %>%
+  .[, start := POSITION] %>%
+  .[, end := POSITION]
+WE.ihs.selSNP <- ihs_WE[[1]] %>% 
+  as.data.table() %>%
+  .[ `-log10(p-value)` > p_treshold, ] %>%
+  .[, start := POSITION] %>%
+  .[, end := POSITION]
+
+## function to plot each SNP p-value from ihs test
+plot_ihs_SNP_custom <- function(dt, pop_names, dSelSNP, ...) {
+  ## plot all SNP p-values
+  tmp <- as.data.table(dt)
+  pSNP <- ggplot(tmp, aes(POSITION, `-log10(p-value)`)) + 
+    geom_point(size = 0.5) +
+    geom_point(data = dSelSNP, aes(POSITION, `-log10(p-value)`), col = "red", size = 0.5) +
+    theme_bw() +
+    xlab("") +
+    ggtitle(pop_names) +
+    geom_hline(yintercept = p_treshold)
+}
+
+plot_ihs_value_SNP_custom <- function(dt, pop_names, dSelSNP, ...) {
+  tmp <- as.data.table(dt)
+  pSNP <- ggplot(tmp, aes(POSITION, iHS)) + 
+    geom_point(size = 0.5) +
+    geom_point(data = dSelSNP, aes(POSITION, iHS), col = "red", size = 0.5) +
+    theme_bw() +
+    xlab("") +
+    ggtitle(pop_names) 
+}
+
+## function to plot median p-value of ihs test between populations for X kb size bin.
+## default: bin size -- 10 KB; # of significant regions marked red -- 10
+plot_ihs_Bin_custom <- function(dt, pop_names, bin_width = 10000, nSigReg = 10, ...) {
+  tmp <- as.data.table(dt)
+   bin_tmp <- tmp %>%
+    .[, B := as.integer(POSITION / bin_width)] %>%
+    .[, .(P = median(`-log10(p-value)`, na.rm = TRUE)), by = B] 
+  sel_reg <- bin_tmp[P > 5, ] %>% 
+    arrange(desc(P)) %>% head(nSigReg)
+  ## plot binned SNP p-values
+  pBinned <- ggplot(bin_tmp, aes(B, P)) + 
+      geom_point() +
+      ylab("median -log10(p-value)") +
+      xlab(paste0(bin_width / 1000, " KB window")) + 
+      ggtitle(pop_names) +
+      theme_bw() +
+      xlab("") +
+      geom_hline(yintercept = 2) + 
+      geom_point(data = sel_reg , aes(B, P), col = "red") ## add 10 regions with most lowest p-value
+}
+
+
+p.AF.ihs <- plot_ihs_SNP_custom(ihs_AF[[1]], "Africa", AF.ihs.selSNP)
+p.EA.ihs <- plot_ihs_SNP_custom(ihs_EA[[1]], "East Asia", EA.ihs.selSNP)
+p.WE.ihs <- plot_ihs_SNP_custom(ihs_WE[[1]], "West Eurasia", WE.ihs.selSNP)
+
+
+p.AF.ihs.value <- plot_ihs_value_SNP_custom(ihs_AF[[1]], "Africa", AF.ihs.selSNP)
+p.EA.ihs.value <- plot_ihs_value_SNP_custom(ihs_EA[[1]], "East Asia", EA.ihs.selSNP)
+p.WE.ihs.value <- plot_ihs_value_SNP_custom(ihs_WE[[1]], "West Eurasia", WE.ihs.selSNP)
+
+#grid.arrange(p.AF.ihs, p.EA.ihs, p.WE.ihs)
+ggsave(grid.arrange(p.AF.ihs.value, p.EA.ihs.value, p.WE.ihs.value), 
+       file = paste0(pic_path, "ihs_value_3pop.jpeg"), device = "jpeg", 
+       units = "in", height = 6, width = 8.5)
+
+
+ggsave(grid.arrange(p.AF.ihs.value, p.EA.ihs.value, p.WE.ihs.value), 
+       file = paste0(pic_path, "ihs_3pop.jpeg"), device = "jpeg", 
+       units = "in", height = 6, width = 8.5)
+
+
+```
+
+```{r between population test}
+
+## all possible between population tests
+#pop_list <- c("AF", "EA", "SA", "WE", "O", "AM", "CAS")
+pop_list <- c("AF", "EA", "WE")
+res <- list(tmp = list())
+
+for (i in pop_list) {
+  for (j in pop_list) {
+    already_done <- names(res)
+    if (i != j & !any(paste(j, i, sep = "_") == already_done)) {
+    Names <- paste(i, j, sep = "_")
+    print(Names)
+    #res[[Names]] <- "yes"   # check while writting function
+    res[[Names]] <- ies2xpehh(get(paste0("hh_", i)), 
+                              get(paste0("hh_", j)), i, j, method = "unilateral")
+    }
+  }
+  res$tmp <- NULL
+}
+## looks nice. even if I have more comparisons than I need. 
+## but I can select which comparisons I want to make.
+str(res)
+##################################################################
+saveRDS(res, file = paste0(output, "rehh_between_pop_res.RDS"))
+
+```
+
+
+```{r plot XPEHH}
+
+res <- readRDS(res, file = paste0(output, "rehh_between_pop_res.RDS"))
+##################################################################
+
+names(res)
+p_treshold <- 3.5
+
+p_treshold <- quantile(res[[1]]$`-log10(p-value) [unilateral]`, 0.9995, na.rm = TRUE)
+#p_treshold <- quantile(res[[2]]$`-log10(p-value) [unilateral]`, 0.9995, na.rm = TRUE)
+#p_treshold <- quantile(res[[3]]$`-log10(p-value) [unilateral]`, 0.9995, na.rm = TRUE)
+
+## selecting significant SNP by threshold values
+AF_EA.ehh.selSNP <- res[[1]] %>% 
+  as.data.table() %>%
+  .[ `-log10(p-value) [unilateral]` > p_treshold, ] %>%
+  .[, start := POSITION] %>%
+  .[, end := POSITION]
+AF_WE.ehh.selSNP <- res[[2]] %>% 
+  as.data.table() %>%
+  .[ `-log10(p-value) [unilateral]` > p_treshold, ] %>%
+  .[, start := POSITION] %>%
+  .[, end := POSITION]
+EA_WE.ehh.selSNP <- res[[3]] %>% 
+  as.data.table() %>%
+  .[ `-log10(p-value) [unilateral]` > p_treshold, ] %>%
+  .[, start := POSITION] %>%
+  .[, end := POSITION]
+
+## function to plot each SNP p-value from xpehh test
+plotXPehh_SNP_custom <- function(dt, dSelSNP,  ...) {
+  ## plot all SNP p-values
+  tmp <- as.data.table(dt)
+  pop_names <- colnames(tmp)[3]
+  pSNP <- ggplot(tmp, aes(POSITION, `-log10(p-value) [unilateral]`)) + 
+    geom_point(size = 0.3) +
+    geom_point(data = dSelSNP, aes(POSITION, `-log10(p-value) [unilateral]`), size = 0.3, col = "red") +
+    theme_bw() +
+    xlab("") +
+    ggtitle(pop_names) +
+    geom_hline(yintercept = p_treshold)
+}
+
+plotXPehh_value_SNP_custom <- function(dt, dSelSNP,  ...) {
+  ## plot all SNP p-values
+  tmp <- as.data.table(dt)[, c(2, 3)]
+  pop_names <- colnames(tmp)[2]
+  pSNP <- ggplot(tmp, aes(POSITION, get(pop_names))) + 
+    geom_point(size = 0.3, alpha = 0.3) +
+    geom_point(data = dSelSNP, aes(POSITION, get(pop_names)), size = 0.1, col = "red") +
+    theme_bw() +
+    ylab("XPEHH") +
+    xlab("") +
+    ggtitle(pop_names) 
+}
+
+
+## function to plot median p-value of xpehh test between populations for X kb size bin.
+## default: bin size -- 10 KB; # of significant regions marked red -- 10
+plotXPehh_Bin_custom <- function(dt, bin_width = 10000, nSigReg = 10, ...) {
+  tmp <- as.data.table(dt)
+  pop_names <- colnames(tmp)[3]
+  bin_tmp <- tmp %>%
+    .[, B := as.integer(POSITION / bin_width)] %>%
+    .[, .(P = median(`-log10(p-value) [unilateral]`, na.rm = TRUE)), by = B] 
+  sel_reg <- bin_tmp[P > 2, ] %>% 
+    arrange(desc(P)) %>% head(nSigReg)
+  ## plot binned SNP p-values
+  pBinned <- ggplot(bin_tmp, aes(B, P)) + 
+      geom_point(size = 0.5) +
+      ylab("median -log10(p-value) [unilateral]") +
+      xlab(paste0(bin_width / 1000, " KB window")) + 
+      ggtitle(pop_names) +
+      theme_bw() +
+      geom_hline(yintercept = 2) + 
+      geom_point(data = sel_reg , aes(B, P), col = "red") ## add 10 regions with most lowest p-value
+}
+
+names(res)
+## 2 comparison and others
+p1.1 <- plotXPehh_SNP_custom(res[[1]], AF_EA.ehh.selSNP)
+p1.2 <- plotXPehh_SNP_custom(res[[2]], AF_WE.ehh.selSNP)
+p1.3 <- plotXPehh_SNP_custom(res[[3]], EA_WE.ehh.selSNP)
+
+p1.1_ehh <- plotXPehh_value_SNP_custom(res[[1]], AF_EA.ehh.selSNP)
+p1.2_ehh <- plotXPehh_value_SNP_custom(res[[2]], AF_WE.ehh.selSNP)
+p1.3_ehh <- plotXPehh_value_SNP_custom(res[[3]], EA_WE.ehh.selSNP)
+
+# p10.1 <- plotXPehh_Bin_custom(res[[1]])
+# p100.1 <- plotXPehh_Bin_custom(res[[1]], 100000)
+# p10.2 <- plotXPehh_Bin_custom(res[[2]])
+# p100.2 <- plotXPehh_Bin_custom(res[[2]], 100000)
+# p10.3 <- plotXPehh_Bin_custom(res[[3]])
+# p100.3 <- plotXPehh_Bin_custom(res[[3]], 100000)
+#grid.arrange(p1.2, p10.2, p100.2)   # different resolution
+# grid.arrange(p10.1, p10.3, p10.2)
+# grid.arrange(p100.1, p100.3, p100.2)
+
+
+## combined plots
+#grid.arrange(p1.1, p1.2, p1.3)
+
+
+ggsave(grid.arrange(p1.1, p1.2, p1.3), file = paste0(pic_path, "ehh_3pop.jpeg"), device = "jpeg", 
+       units = "in", height = 6, width = 8.5)
+
+saveRDS(list(AF.ihs.selSNP, EA.ihs.selSNP, WE.ihs.selSNP, 
+             AF_EA.ehh.selSNP, AF_WE.ehh.selSNP, EA_WE.ehh.selSNP), 
+        file = paste0(output, "rehh.selectedSNP.RDS"))
+
+ggsave(grid.arrange(p1.1_ehh, p1.2_ehh, p1.3_ehh), 
+       file = paste0(pic_path, "ehh_value_3pop.jpeg"), device = "jpeg", 
+       units = "in", height = 6, width = 8.5)
+
+
+```
+
+
+
+```{r bifurcation plots}
+dSigPos <- fread(paste0(output, "dSigWithin_ihs.txt"))
+
+
+one_snp_pos <- dSigPos[region == "AF" & no == 1,][[2]][1]
+num_SNP <- which(hh_AF$POSITION == one_snp_pos)
+bifurcation.diagram(dAF, 
+                    mrk_foc = num_SNP, 
+                    all_foc = 2,
+                    nmrk_l = 200,
+                    nmrk_r = 200, 
+                    main = paste0("pos: ", one_snp_pos, " : Derived Allele"))
+# AF 1-2 yra centromera. Centromera yra ~ chrX:58100000-63600000 (rough estimation from https://genome-euro.ucsc.edu/)
+dSigPos[start < 58000000 | start > 63600000, .N, region]
+## maybe I should exclude entromere region before hand. 
+
+bifurcation.diagram(dAF, 
+                    mrk_foc = num_SNP, 
+                    all_foc = 1,
+                    nmrk_l = 100,
+                    nmrk_r = 100, 
+                    main = paste0("pos: ", one_snp_pos, " : Ancestrial Allele"))
+
+```
+
+

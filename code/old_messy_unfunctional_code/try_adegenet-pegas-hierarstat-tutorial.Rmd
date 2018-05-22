@@ -1,0 +1,113 @@
+---
+title: "try_tutorial"
+author: "Vita"
+date: "May 12, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("adegenet")
+library("hierfstat")
+library("pegas")
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+```
+
+my tries to get the adegenet, pegas and hierfstat programs to work
+
+
+
+```{r import_data}
+## paths
+input <- "../input/"
+output <- "../output/"
+pic_path <- "../graphs/"
+
+## import genotype data
+dAF <- fread(paste0(input, "genotypes_AF"), header = FALSE) %>% t()
+dEA <- fread(paste0(input, "genotypes_EA"), header = FALSE) %>% t()
+dSA <- fread(paste0(input, "genotypes_SA"), header = FALSE) %>% t()
+dWE <- fread(paste0(input, "genotypes_WE"), header = FALSE) %>% t()
+dAM <- fread(paste0(input, "genotypes_AM"), header = FALSE) %>% t()
+dO <- fread(paste0(input, "genotypes_O"), header = FALSE) %>% t()
+dCAS <- fread(paste0(input, "genotypes_CAS"), header = FALSE) %>% t()
+
+## Snp data
+dSnp <- fread(paste0(input, "snps_filtered")) 
+colnames(dSnp) <- c("ID", "chrom", "pos", "base", "alt")
+
+###  creating genind objects ####
+## prep
+dCombined <- rbind(dAF, dEA, dSA, dWE, dAM, dO, dCAS)
+dim(dCombined)
+ind <- 1:nrow(dCombined)
+pop <- c(rep("AF", nrow(dAF)),
+         rep("EA", nrow(dEA)),
+         rep("SA", nrow(dSA)),
+         rep("WE", nrow(dWE)))
+stopifnot(length(pop) == length(ind))
+
+
+genind_Comb <- df2genind(dCombined[, 1:50], 
+                         ploidy = 1, 
+                         ind.names = ind, 
+                         pop = pop, sep = "")
+Mydata2 <- genind2hierfstat(genind_Comb) # Create hierfstat object
+
+
+
+```
+
+```{r tutorial}
+## example data 
+Mydata <- fread(paste0(input, "Master_Pinus_data_genotype.txt"))
+str(Mydata)
+dim(Mydata)
+## rows are individuals
+## first columns are some metadata and then the SNP (names in numbers)
+#Mydata[1:10, c(1, 2, 3, 4, 17, 18)]
+
+
+### creating genind object ###
+locus <- Mydata[, -c(1, 2, 3, 4, 17:3086)]    # taking only 11 SNP to be faster and exclude metadata -- 1:4 columns
+colnames(locus) <- gsub("\\.", "_", colnames(locus))  # locus names can't have "."
+ind <- as.character(Mydata$tree_id)  # labels of the individuals
+population <- as.character(Mydata$state)  # labels of the populations
+unique(population)   # checking population values
+
+Mydata1 <- df2genind(locus, ploidy = 2, ind.names = ind, pop = population, sep = "")
+
+# my data 
+basicstat <- basic.stats(Mydata2, diploid = FALSE, digits = 2) 
+str(basicstat)
+names(basicstat)   
+basicstat$perloc
+
+
+res <- hw.test(genind_Comb, B = 0)
+res <- adegenet::HWE.test.genind(genind_Comb)
+data("nancycats")
+nancycats
+hw.test(nancycats, B = 0)
+hw.test(genind_Comb, B = 0)
+seppop(nancycats) %>% lapply(hw.test, B = 0)
+seppop(genind_Comb) %>% lapply(hw.test, B = 0)
+
+nAll(genind_Comb)
+div <- summary(genind_Comb)
+str(div)
+divMydata <- summary(genind_Comb)
+plot(div$Hobs, xlab="Loci number", ylab="Observed Heterozygosity", 
+     main="Observed heterozygosity per locus")
+basicstat <- basic.stats(Mydata2, diploid = FALSE, digits = 2) 
+?basic.stats
+
+loci <- genind2loci(genind_Comb)
+data(jaguar)
+LD(loci, details = FALSE)
+LD2(jaguar, details = FALSE)
+
+```

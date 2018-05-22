@@ -1,0 +1,317 @@
+---
+title: "Untitled"
+author: "Vita"
+date: "May 16, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#source("http://ldhat.sourceforge.net/R/coalescent.r")
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+library(psych)
+
+#install.packages("StataG")
+
+
+## paths
+input <- "../input/"
+output <- "../output/"
+pic_path <- "../graphs/"
+
+## import genotype data
+dAF <- fread(paste0(input, "genotypes_AF"), header = FALSE)
+dEA <- fread(paste0(input, "genotypes_EA"), header = FALSE)
+dSA <- fread(paste0(input, "genotypes_SA"), header = FALSE)
+dWE <- fread(paste0(input, "genotypes_WE"), header = FALSE)
+dAM <- fread(paste0(input, "genotypes_AM"), header = FALSE)
+dO <- fread(paste0(input, "genotypes_O"), header = FALSE)
+dCAS <- fread(paste0(input, "genotypes_CAS"), header = FALSE)
+
+## Snp data
+dSnp <- fread(paste0(input, "snps_filtered")) 
+colnames(dSnp) <- c("ID", "chrom", "pos", "base", "alt")
+
+## custom function to calculate harmonic mean (adjusted to handle NA values)
+x <- c(1:10, NA, NA)
+calcHM <- function(x) {
+  sum(!is.na(x)) / sum(1/x, na.rm = TRUE)
+}
+calcHM2 <- function(x) {
+  X <- as.numeric(x)
+  X <- X[!is.na(X)]
+  length(X) / sum(1/X)
+}
+
+calcHM(x)
+calcHM2(x)
+geometric.mean(x, na.rm = TRUE)
+mean(x, na.rm = TRUE)
+```
+
+
+```{r}
+## SNP count in X Kb window
+BW <- 100000  
+res <- dSnp %>%
+  .[, .(B = as.integer(pos / BW))] %>%
+  .[, .(count = .N), by = B]
+
+ggplot(res, aes(B, count)) + 
+  geom_point(size = 0.5)
+
+## SNP density by position
+temp <- density(dSnp$pos, bw = 10)
+plot(temp, 
+     #type = "n", 
+     xlab = "Position in the alignment",
+     main = "Location of the SNPs")
+polygon(c(temp$x, rev(temp$x)), 
+        c(temp$y, rep(0, length(temp$x))), 
+        col = "blue")
+
+
+#################################################################################
+## function to convert the genotypes from letters to numbers
+## derived allele is coded 0, ancestrial allele is coded 1
+convertHaplotype01 <- function(dSnp, dGenotypes, ...) {
+  dComb <- cbind(dSnp[, 3:5], dGenotypes)
+  dConvMatrix <- apply(dComb, 1, function(x) {
+    a <- x[3]
+    b <- x[2]
+    n_A <- gsub(a, 0, x[-c(1:3)]) 
+    HapCovRow <- gsub(b, 1, n_A) %>% as.numeric()
+  })
+return(dConvMatrix)
+}
+
+dAM_convMT <- convertHaplotype01(dSnp, dAM)
+dAF_convMT <- convertHaplotype01(dSnp, dAF)
+dWE_convMT <- convertHaplotype01(dSnp, dWE)
+## takes a bit of time....
+## SNP end up in the columns and individuals in the rows. But that is ok
+i <- 1
+
+## calculate mean and median correlation values for ~100 SNP that are next to each other
+calcXSNP_cor <- function(dSnp, dAF_convMT, XSNP = 100, ...) {
+  require(data.table)
+  nSNP <- dim(dAF_convMT)[[2]]   # number of SNP
+  reg <- as.integer((1:nSNP) / XSNP)   # devide SNP to regions
+  dReg.cor <- data.frame()   # iniciate result data.frame
+  for (i in unique(reg)) {
+    print(i)
+    res.cor <- cor(dAF_convMT[, reg == i]) 
+    #res.cor[lower.tri(res.cor, diag = TRUE)] <- NA   # optional. experiment
+    diag(res.cor) <- NA
+    dReg.cor <- rbind(dReg.cor, 
+                      data.frame(regionID = i, 
+                                 pos = mean(dSnp$pos[reg == i], na.rm = TRUE), 
+                                 mean.corr = mean((res.cor)^2, na.rm = TRUE), 
+                                 HM.corr = calcHM((res.cor)^2), 
+                                 HM.cor2 = calcHM2((res.cor)^2),
+                                 GM.corr = geometric.mean(as.numeric((res.cor)^2), 
+                                                          na.rm = TRUE),
+                                 median.corr = median((res.cor)^2, na.rm = TRUE))
+                      )
+  }
+  return(dReg.cor)
+}
+
+dcor_AM <- calcXSNP_cor(dSnp, dAM_convMT, 100)
+dcor_AF <- calcXSNP_cor(dSnp, dAF_convMT, 100)
+dcor_WE <- calcXSNP_cor(dSnp, dWE_convMT, 100)
+
+
+
+#### sadasdgasdg ####
+
+## plot results
+
+pAF_mean <- dcor_AF %>%
+  ggplot(aes(regionID, mean.corr)) + 
+  geom_hline(yintercept = 0, col = "red") +
+  geom_point(size = 0.5)  
+pAF_median <- dcor_AF %>%
+  ggplot(aes(pos, median.corr)) + 
+  geom_hline(yintercept = 0, col = "red") +
+  geom_point(size = 0.5)
+pAF_HM <- dcor_AF %>%
+  ggplot(aes(pos, HM.corr)) + 
+  geom_hline(yintercept = 0, col = "red") +
+  geom_point(size = 0.5)  
+pAF_GM <- dcor_AF %>%
+  ggplot(aes(pos, GM.corr)) + 
+  geom_hline(yintercept = 0, col = "red") +
+  geom_point(size = 0.5)  
+
+grid.arrange(pAF_HM, pAF_HM2)
+grid.arrange(pAF_mean, pAF_HM, pAF_median, pAF_GM)
+## I think now it makes sense. This mean LD value for 100 windows
+
+dcor_AM %>%
+  ggplot(aes(pos, mean.corr)) + 
+  #geom_bar(stat = "identity") 
+  geom_point(size = 0.5)  
+
+dcor_WE %>%
+  ggplot(aes(pos, mean.corr)) + 
+  #geom_bar(stat = "identity") 
+  geom_point(size = 0.5)  
+
+
+nSNP <- dim(dAF_conMT)[[2]]   # number of SNP
+  reg <- as.integer((1:nSNP) / XSNP)   # devide SNP to regions
+  dReg.cor <- data.frame()   # iniciate result data.frame
+  for (i in unique(reg)) {
+    print(i)
+    res.cor <- cor(dAF_conMT[, reg == i]) 
+    #res.cor[lower.tri(res.cor, diag = TRUE)] <- NA   # optional. experiment
+    diag(res.cor) <- NA
+    dReg.cor <- rbind(dReg.cor, 
+                      data.frame(regionID = i, 
+                                 pos = mean(dSnp$pos[reg == i], na.rm = TRUE), 
+                                 mean.corr = mean(res.cor, na.rm = TRUE), 
+                                 median.corr = median(res.cor, na.rm = TRUE))
+                      )
+
+}
+
+## function to bin SNP by physical distance and then find correlation for that region
+## dHapMT -- haplotype numeric matrix: columns -- snp, rows -- individuals, 
+## BW -- bin window size for which to calculate correlation
+## bindowns with only 1 SNP are ignore.
+calcSnpBin_cor <- function(dSnp, dAF_conMT, BW = 10000, ...) {
+  require(data.table)
+  reg <- as.integer((dSnp$pos / BW))
+  snp_region_ID <- as.numeric(names(which(table(reg) != 1)))
+  dReg.cor <- data.table()   # iniciate result data.frame
+  for (i in snp_region_ID) {
+    print(i)
+    res.cor <- cor(dAF_conMT[, reg == i]) 
+    #res.cor[lower.tri(res.cor, diag = TRUE)] <- NA   # optional. experiment
+    diag(res.cor) <- NA
+    dReg.cor <- rbind(dReg.cor, 
+                      data.table(B = i, 
+                                 n_snp = nrow(res.cor),
+                                 mean.corr = mean(res.cor, na.rm = TRUE), 
+                                 median.corr = median(res.cor, na.rm = TRUE))
+                      )
+  }
+  return(dReg.cor)
+}
+
+dCorBin_AF <- calcSnpBin_cor(dSnp, dAF_convMT)
+dCorBin_AF100kb <- calcSnpBin_cor(dSnp, dAF_convMT, BW = 100000)
+dCorBin_AF100kb <- calcSnpBin_cor(dSnp, dAF_convMT, BW = 100000)
+
+## plot results
+dCorBin_AF[, -2] %>% 
+  melt(id.vars = "B") %>%
+  ggplot(aes(B, value, col = variable)) + 
+    geom_point(size = 0.5)  
+
+dCorBin_AF100kb[, -2] %>%
+  melt(id.vars = "B") %>%
+  ggplot(aes(B, value, col = variable)) + 
+    geom_point(size = 0.5)  
+
+## only mean
+p100KB <- dCorBin_AF100kb %>%
+  ggplot(aes(B, mean.corr)) + 
+    geom_point(size = 0.5)  
+
+p100SNP <- dcor_AF %>%
+  ggplot(aes(regionID, mean.corr)) + 
+    geom_point(size = 0.5)  
+
+grid.arrange(p100KB, p100SNP)
+
+## trying just for 1 region to figure out how it actually looks
+reg <- as.integer((1:nSNP) / 100)   # devide SNP to regions
+res.cor <- cor(dAF_conMT[, reg == 2]) 
+#res.cor[lower.tri(res.cor, diag = TRUE)] <- NA
+diag(res.cor) <- NA
+
+
+cor(dAF_conMT[, reg == 1]) %>% median(na.rm = TRUE)
+cor(dAF_conMT[, reg == 1]) %>% 
+  as.numeric() %>% 
+  summary(na.rm = TRUE)
+
+res.cor %>% 
+  as.numeric() %>% 
+  density(na.rm = TRUE) %>%
+  plot()
+
+res <- cor(dAM_converted[, 1:100])
+mean(res, na.rm = TRUE)
+  
+
+
+###################################################################################
+## carl's code
+ancestral2zero = function(ancestral, snps) {
+    cbind(ancestral, snps) %>%
+    apply(1, function(x) {
+        zeroes = gsub(x[1], 0, x[-1]) # turn ancestral snps into zeroes
+        as.integer(gsub("[A,C,T,G]", 1, zeroes)) # turn derived snps into ones
+    }) %>% 
+    t() %>%
+    return()
+}
+
+#run:
+ancestral2zero2(snp_metadata[1:100,]$ancestral, genotypes_AF[1:100,])
+
+binary_snps <- t(dAF_conMT)
+n_snps = dim(binary_snps)[1]
+n_folds = 1000
+e_results = rep(NA, n_folds)
+if (n_snps > n_folds) {
+  fold <- 2
+    for (fold in 1:n_folds) {
+        
+        start = floor((fold - 1) * (n_snps/n_folds) + 1)
+        end = floor((fold)*(n_snps/n_folds))
+        #print(paste(fold, ":", start, end))
+        
+        correlation = cor(binary_snps[start:end,])
+        diag(correlation) = NA
+        
+        #print(correlation)
+        e_results[fold] = mean(correlation, na.rm = T)
+    }
+}
+print(e_results)
+
+
+
+```
+
+
+```{r site frequency spectrum}
+
+dAF_conMT[, 1:10]
+
+res <- apply(dAF_conMT, 2, function(x) {
+  c(n_0 = sum(x == 0, na.rm = TRUE), 
+    n_1 = sum(x == 1, na.rm = TRUE))
+}) %>%
+  t() %>%
+  as.data.table()
+
+res <- as.data.table(t(res))
+res %>% 
+  melt() %>%
+  ggplot(aes(value, col = variable)) + 
+    geom_histogram(bins = dim(dAF_conMT)[1]) +
+    facet_grid(variable ~ .)
+
+## but what does that show me?
+```
+
+
+

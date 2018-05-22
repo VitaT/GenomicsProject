@@ -1,0 +1,345 @@
+---
+title: "Fst_try"
+author: "Vita"
+date: "May 2, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+```
+
+
+
+```{r import_data}
+## paths
+input <- "../input/"
+output <- "../output/"
+pic_path <- "../graphs/"
+
+## import genotype data
+dAF <- fread(paste0(input, "genotypes_AF"), header = FALSE)
+dEA <- fread(paste0(input, "genotypes_EA"), header = FALSE)
+dSA <- fread(paste0(input, "genotypes_SA"), header = FALSE)
+dWE <- fread(paste0(input, "genotypes_WE"), header = FALSE)
+dAM <- fread(paste0(input, "genotypes_AM"), header = FALSE)
+dO <- fread(paste0(input, "genotypes_O"), header = FALSE)
+dCAS <- fread(paste0(input, "genotypes_CAS"), header = FALSE)
+
+## Snp data
+dSnp <- fread(paste0(input, "snps_filtered")) 
+colnames(dSnp) <- c("ID", "chrom", "pos", "base", "alt")
+```
+
+```{r writing output for ldhat}
+dim(dAF)
+header <- paste(dim(dAF)[[2]], dim(dAF)[[1]], "1")
+tAF <- t(dAF)
+tAF[1:10, 1:10]
+write.table(tAF, file = paste0(output, "tAF"), quote = FALSE, col.names = FALSE, sep = "")
+
+#cat tAF | sed 's/V\([0-9]\+\)/>& \n/g' > tAF_tmp
+#cat tAF_tmp | fold -w 10000 > tAF_tmp2
+#sed '1s/^/21 411892 1\n/' tAF_tmp2 > Xchrom.ldhat.tAF.final.sites
+
+
+
+write.table((dSnp[, 3] / 1000), file = paste0(output, "Xchrom.ldhat.locus.tmp"), quote = FALSE, col.names = FALSE, sep = "", row.names = FALSE)
+cmd <- paste0("sed '1s/^/", nrow(dSnp), " ", max(dSnp$pos) / 1000, " L\n/' ", output, "Xchrom.ldhat.locus.tmp > ", output, "Xchrom.ldhat.locus")
+system(cmd)
+
+# ldhat command
+rhomap -seq Xchrom.ldhat.tAF.final.sites -loc Xchrom.ldhat.locus -lk ~/_prog/LDhat/complete_lookUpTables -its 1000000 -samp 2000 -burn 0
+
+```
+
+
+
+
+The data is haploid (n) therefore calculating Fst consists of estimating the allele frequencies for each position and calculating the expected heterozygosity within population Hs and contrasting Expected Heterozygosity across populations Ht.
+
+Fst = (Ht - Hs)/Ht.
+
+This can be done by averaging Fst values for a set of consecutive markers in a given window size (100 SNPs).
+
+```{r calc_allele_freq}
+
+# function to calculate NA in snp
+get_NA_perc_forSNP <- function(Data, ...) {
+  nNA_snp <- apply(Data, 1, function(x) sum(is.na(x)))
+  max_nHap <- dim(Data)[2]
+  df_NA_stat <- data.table(ID = 1:length(nNA_snp), 
+                           n_na = nNA_snp,
+                           perc_NA = nNA_snp / max_nHap) 
+  #bin_width <- 100   # 100 SNP
+  #df_NA_stat[, plot_bin := (as.integer(ID / bin_width) + 0.5) * bin_width]  
+  return(df_NA_stat)
+}
+
+snp_na_perc <- get_NA_perc_forSNP(dAF)
+summary(snp_na_perc)
+
+## function to calculate allele frequency for each SNP from haplotype data 
+calc_haplotype_freq <- function(dSnp, dGenotypes, ...) {
+  
+  nHap <- dim(dGenotypes)[2]
+  dComb <- cbind(dSnp[, 3:5], dGenotypes)
+  # count alternative allele
+  n_A <- apply(dComb, 1, function(x) {
+    a <- x[3]
+    n_A <- sum(x[-c(1:3)] == a)
+    })
+  # count base allele
+  n_B <- apply(dComb, 1, function(x) {
+    b <- x[2]
+    n_B <- sum(x[-c(1:3)] == b)
+    })
+  # combine results
+  dRes <- data.table(pos = dComb$pos, 
+                     f_A = n_A / nHap, 
+                     f_B = n_B / nHap)
+  # check if all frequencies add up to 1
+  if (unique(dRes$f_A + dRes$f_B) != 1) {stop("allele frequencies do not add up to 1")}
+  return(dRes)
+}
+
+
+f_AF <- calc_haplotype_freq(dSnp, dAF)
+f_EA <- calc_haplotype_freq(dSnp, dEA)
+f_SA <- calc_haplotype_freq(dSnp, dSA)
+f_WE <- calc_haplotype_freq(dSnp, dWE)
+f_O <- calc_haplotype_freq(dSnp, dO)
+f_CAS <- calc_haplotype_freq(dSnp, dCAS)
+f_AM <- calc_haplotype_freq(dSnp, dAM)
+head(f_AM)
+
+
+```
+
+within population heterozygosity: 2 * f_A * f_B
+for each SNP in each population separately
+f_AF[, Hs := (2 * f_A * f_B)]
+
+
+total population heretozygosity: 2 * mean(f_A) * mean(f_B),
+where mean is mean allele frequency from different populations
+
+I see 2 ways:
+1) Ht -- combine all the data I have. Just pool everything
+2) Ht -- just pool 2 populations. make pairwise comparisons.
+I think 1st way does not really make that much sence, because naturally we will see population structure. But we will not see from which population exactly does it come
+will try  both
+
+ok. as I though... way 1 is not really what I want. Have to calculate the pairwise Fst between populations
+
+```{r ADDITIONAL:way_1_complete_pooled_stuff}
+# combining all dataset to one
+dComb <- rbind(f_AF[, region := "AF"], 
+               f_EA[, region := "EA"],
+               f_SA[, region := "SA"],
+               f_WE[, region := "WE"],
+               f_O[, region := "O"],
+               f_CAS[, region := "CAS"],
+               f_AM[, region := "AM"])
+
+dComb[pos == 400132, ]   # check
+
+## get HT, HS and FST
+dRes <- dComb[, .(HT = (2 * mean(f_A) * mean(f_B)), 
+                  HS = mean(2 * f_A * f_B)), by = pos] %>%
+    .[, Fst := 1 - (HS / HT)]
+
+## we get some SNP's where in all populations one of the alleles is fixed. 
+## That is one of the cases when we can get Fst -- NA, because we devide by 0
+## will remove those places
+FstNA_pos <- dRes[is.na(Fst), ][["pos"]]
+dComb[pos %in% FstNA_pos, ]   # checking how frequencies look
+dRes <- dRes[ !pos %in% FstNA_pos, ]   # removing fixed sites in all pop
+
+
+
+## Binning SNP and averaging Fst for bins and counting # of SNP in a bin
+bin_width <- 100000   # 100 kb windows
+dFst_bin <- dRes[, .(B = (as.integer(pos/bin_width) + 0.5) * bin_width/1000, Fst)] %>%
+  .[, .(Fst = mean(Fst), n_inBin = .N), by = B ]
+
+## plot of SNP number in bins
+pSNP_count_bin <- ggplot(dFst_bin, aes(B, n_inBin)) +
+    geom_point() +
+    xlab("X chrom, 100 kb bin") +
+    ylab("SNP count in 100 kb bin")
+ggsave(pSNP_count_bin, file = paste0(pic_path, "pSNP_count_bin", ".jpeg"), device = "jpeg")
+dFst_bin[n_inBin < 10, ]
+## maria mentioned weighting Fst by the density of SNP in them... how to do that?
+
+p100kbFst <- dFst_bin %>%
+  ggplot(aes(B, Fst)) + 
+    geom_point()
+
+## Binning SNP, mean Fst for bins and count # of SNP in a bin. Just smaller bins
+bin_width <- 10000   # 10 kb windows
+dFst_bin <- dRes[, .(B = (as.integer(pos/bin_width) + 0.5) * bin_width/1000, Fst)] %>%
+  .[, .(Fst = mean(Fst), n_inBin = .N), by = B ]
+p10kbFst <- dFst_bin %>%
+  ggplot(aes(B, Fst)) + 
+    geom_point(alpha = 0.3, size = 0.8)
+
+## binning SNP to bins of 100 SNP. maybe more accurate Fst estimate eventhough it does not correspond to physical length of chromosome
+dFst_bin2 <- dRes[, .(B2 = (as.integer(1:nrow(dRes) / 100)) , Fst)] %>%
+   .[, .(Fst = mean(Fst), n_inBin = .N), by = B2 ]
+p100SNPFst <- dFst_bin2 %>%
+  ggplot(aes(B2, Fst)) + 
+    geom_point(alpha = 0.5)
+
+grid.arrange(p100kbFst, p10kbFst, p100SNPFst, ncol = 1)
+## as I though, if I combine everything, then naturally I see some population structure. But not that much
+
+```
+
+```{r way2:FST_between_pairs_of_populations}
+
+## NOTE:some SNP are fixed in all populations that we are analysing. There is no variance at all in the pooled population: HT = 0. And then Fst becomes NA. Not interesting, so will remove those. However, I will not remove SNP who get Fst NA in just 2 populations. Could deduce then in which populations some SNP are fixated and in others not. 
+
+dComb <- rbind(f_AF[, region := "AF"], 
+               f_EA[, region := "EA"],
+               f_SA[, region := "SA"],
+               f_WE[, region := "WE"],
+               f_O[, region := "O"],
+               f_CAS[, region := "CAS"],
+               f_AM[, region := "AM"])
+
+dRes <- dComb[, .(HT = 2 * mean(f_A) * mean(f_B)), by = pos]   # get HT
+
+SNP_fixed <- dRes[HT == 0, ][["pos"]]  # vector with SNP to remove
+
+
+dRes <- dComb %>%
+    group_by(pos) %>%
+    summarize( HT = 2 * mean(f_A) * mean(f_B))   # get HT
+SNP_fixed <- dRes[dRes$HT == 0, ][[1]]
+
+
+## function to get Fst between 2 pop:
+get_Fst2pop <- function(f_Pop1, f_Pop2, name_pop1, name_pop2, fixed_allelesTRUE) {
+  require(data.table)
+  # filtering for globally fixed allels
+  dPop1_filt <- f_Pop1[!pos %in% fixed_allelesTRUE, ]
+  dPop2_filt <- f_Pop2[!pos %in% fixed_allelesTRUE, ]
+  
+  dComb <- rbind(dPop1_filt[, region := name_pop1], 
+                 dPop2_filt[, region := name_pop2])
+  if (nrow(dComb) != nrow(dPop1_filt)*2) {stop("some SNP are missing in one pop")}
+  ## get HT, HS and FST
+  dRes <- dComb[, .(HT = (2 * mean(f_A) * mean(f_B)), 
+                    HS = mean(2 * f_A * f_B)), by = pos] %>%
+      .[, Fst := 1 - (HS / HT)]
+}
+# fixed_allelesTRUE <- SNP_fixed
+# fixed_allelesTRUE <- c()
+# f_Pop1 <- f_AF
+# f_Pop2 <- f_EA
+# name_pop1 <- "AF"
+# name_pop2 <- "EA"
+
+  
+dFst_AF_EA <- get_Fst2pop(f_AF, f_EA, "AF", "EA", SNP_fixed)
+dFst_AF_WE <- get_Fst2pop(f_AF, f_WE, "AF", "WE", SNP_fixed)
+dFst_EA_WE <- get_Fst2pop(f_AF, f_EA, "EA", "WE", SNP_fixed)
+
+## NOTE: I could get a loop with all possible 2 population combinations (42 in total) to get Fst for each one of them. and then inside that loop also add combined plots from functions that I wrote below.
+## in the end I can pool Fst statistics from different population combinations and try to look how those Fst differ between populations?
+
+
+## removing SNP in the centromere region:
+dFst_AF_EA <- dFst_AF_EA[pos < 58000000 | pos > 63600000, ] 
+dFst_AF_WE <- dFst_AF_WE[pos < 58000000 | pos > 63600000, ] 
+dFst_EA_WE <- dFst_EA_WE[pos < 58000000 | pos > 63600000, ] 
+dFst_AF_WE[pos > 58000000 & pos < 63600000, ]
+dFst_AF_EA[pos > 58000000 & pos < 63600000, ]
+dFst_EA_WE[pos > 58000000 & pos < 63600000, ]
+
+dim(dFst_AF_EA)
+
+
+
+
+
+
+table(is.na(dFst_AF_EA$Fst), is.na(dFst_AF_WE$Fst))
+table(is.na(dFst_EA_WE$Fst), is.na(dFst_AF_WE$Fst))
+table(is.na(dFst_AF_EA$Fst), is.na(dFst_EA_WE$Fst))   # this is interesting. 
+## yup... A bit different regions are fixated by populations... 
+## The third combination is interesting, but my head now is not in shape to actually uncerstand why.... and what does it mean
+
+```
+
+
+```{r plot_pairwise_fst}
+
+
+## function to plot Fst by chosen bin (by physical distance)
+plot_KBBin_Fst <- function(dFst, bin_width, name_plot, 
+                             psize = 0.9, palpha = 1, ...) {
+  dFst_bin <- dFst[, .(B = (as.integer(pos/bin_width) + 0.5) * bin_width, Fst)] %>%
+  .[, .(Fst = mean(Fst, na.rm = TRUE)), by = B ]
+  pBinFst <- dFst_bin %>%
+  ggplot(aes(B, Fst)) + 
+    ggtitle(name_plot) +
+    geom_point(size = psize, alpha = palpha)
+}
+
+## function to plot mean Fst for bins with X SNP in the next to each other (despite distance, just by the order the SNP go on chromosome)
+plot_XSNPBin_Fst <- function(dFst, X_SNP_in_bin, name_plot,
+                             psize = 0.9, palpha = 1, ...) {
+  dFst_bin <- dFst[, .(B = (as.integer(1:nrow(dFst)/X_SNP_in_bin) + 0.5), 
+                            Fst)] %>%
+    .[, .(Fst = mean(Fst, na.rm = TRUE)), by = B ]
+  pBinFst <- dFst_bin %>%
+  ggplot(aes(B, Fst)) + 
+    ggtitle(name_plot) +
+    geom_point(size = psize, alpha = palpha)
+}
+
+
+SNP_bin <- 100   # 100 SNP in a bin
+bin_width10 <- 10000   # 10 kb windows
+bin_width100 <- 100000   # 100 kb windows
+
+p100_AF_EA <- plot_KBBin_Fst(dFst_AF_EA, bin_width100, "AF_EA, 100KB windows")
+p100_AF_WE <- plot_KBBin_Fst(dFst_AF_WE, bin_width100, "AF_WE, 100KB windows")
+p100_EA_WE <- plot_KBBin_Fst(dFst_EA_WE, bin_width100, "EA_WE, 100KB windows")
+grid.arrange(p100_AF_EA, p100_AF_WE, p100_EA_WE)
+
+p10_AF_EA <- plot_KBBin_Fst(dFst_AF_EA, bin_width10, "AF_EA, 10KB windows", 0.8, 0.3) 
+p10_AF_WE <- plot_KBBin_Fst(dFst_AF_WE, bin_width10, "AF_WE, 10KB windows", 0.8, 0.3)
+p10_EA_WE <- plot_KBBin_Fst(dFst_EA_WE, bin_width10, "EA_WE, 10KB windows", 0.8, 0.3)
+ggsave(grid.arrange(p10_AF_EA, p10_AF_WE, p10_EA_WE), 
+       file = paste0(pic_path, "Fst_10kb_pairwiseComp", ".jpeg"), device = "jpeg",
+       units = "in", width = 9, height = 6)
+
+pSNPbin_AF_EA <- plot_XSNPBin_Fst(dFst_AF_EA, SNP_bin, "AF_EA, ~100 SNP bins", 0.8, 0.5) 
+pSNPbin_AF_WE <- plot_XSNPBin_Fst(dFst_AF_WE, SNP_bin, "AF_WE, ~100 SNP bins", 0.8, 0.5)
+pSNPbin_EA_WE <- plot_XSNPBin_Fst(dFst_EA_WE, SNP_bin, "EA_WE, ~100 SNP bins", 0.8, 0.5)
+ggsave(grid.arrange(pSNPbin_AF_EA, pSNPbin_AF_WE, pSNPbin_EA_WE),
+  file = paste0(pic_path, "Fst_100SNP_pairwiseComp", ".jpeg"), device = "jpeg", 
+  units = "in", width = 9, height = 6)
+
+
+## binning SNP to bins of 100 SNP. maybe more accurate Fst estimate eventhough it does not correspond to physical length of chromosome
+
+
+```
+
+
+
+
+
+
+
+
+
+
