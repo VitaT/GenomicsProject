@@ -156,7 +156,7 @@ ggsave(grid.arrange(p.AF.ihs.value, p.EA.ihs.value, p.WE.ihs.value),
        units = "in", height = 6, width = 8.5)
 
 
-ggsave(grid.arrange(p.AF.ihs.value, p.EA.ihs.value, p.WE.ihs.value), 
+ggsave(grid.arrange(p.AF.ihs, p.EA.ihs, p.WE.ihs), 
        file = paste0(pic_path, "ihs_3pop.jpeg"), device = "jpeg", 
        units = "in", height = 6, width = 8.5)
 

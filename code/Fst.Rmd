@@ -139,7 +139,9 @@ dFst_EA_WE <- get_Fst2pop(f_AF, f_EA, "EA", "WE", SNP_fixed)
 ## NOTE: I could get a loop with all possible 2 population combinations (42 in total) to get Fst for each one of them. and then inside that loop also add combined plots from functions that I wrote below.
 ## in the end I can pool Fst statistics from different population combinations and try to look how those Fst differ between populations?
 
-mean(dFst_AF_EA$Fst)
+summary(dFst_AF_EA)
+summary(dFst_AF_WE)
+summary(dFst_EA_WE)
 
 ##########################################################################
 ## getting regions of Fst.

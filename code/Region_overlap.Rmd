@@ -31,9 +31,9 @@ gtf <- rtracklayer::import(paste0(input, "gencode.v17.annotation.gtf")) %>%
 ## Fst
 tmp <- readRDS(file = paste0(output, "FstSelReg_KB.RDS"))
 #saveRDS(list(AF_EA.HFst.SNP, AF_WE.HFst.SNP, EA_WE.HFst.SNP), file = paste0(output, "FstSelReg_SNP.RDS")
-AF_EA.HFst.KB <- tmp[[1]]
-AF_WE.HFst.KB <- tmp[[2]]
-EA_WE.HFst.KB <- tmp[[3]]
+AF_EA.HFst.KB <- tmp[[1]] %>% .[, pop := "AF_EA"] %>% .[, stat := "Fst"] 
+AF_WE.HFst.KB <- tmp[[2]] %>% .[, pop := "AF_WE"] %>% .[, stat := "Fst"] 
+EA_WE.HFst.KB <- tmp[[3]] %>% .[, pop := "EA_WE"] %>% .[, stat := "Fst"] 
 
 ## IHS
 tmp <- readRDS(file = paste0(output, "rehh.selectedSNP.RDS"))
@@ -41,9 +41,13 @@ AF.ihs.selSNP <- tmp[[1]]
 EA.ihs.selSNP <- tmp[[2]]
 WE.ihs.selSNP <- tmp[[3]]
 ## XPEHH
-AF_EA.ehh.selSNP <- tmp[[4]]
-AF_WE.ehh.selSNP <- tmp[[5]]
-EA_WE.ehh.selSNP <- tmp[[6]]
+AF_EA.ehh.selSNP <- tmp[[4]] %>% .[, pop := "AF_EA"] %>% .[, stat := "XPEHH"] %>% 
+  .[, .(start, end, pop, stat)]
+AF_WE.ehh.selSNP <- tmp[[5]] %>% .[, pop := "AF_WE"] %>% .[, stat := "XPEHH"] %>% 
+  .[, .(start, end, pop, stat)]
+EA_WE.ehh.selSNP <- tmp[[6]] %>% .[, pop := "EA_WE"] %>% .[, stat := "XPEHH"] %>% 
+  .[, .(start, end, pop, stat)]
+
 
 
 ```
@@ -68,8 +72,8 @@ FstComp <- dcast(F_tmp, gene_name + gene_type ~ comparison) %>%
   .[order(EA_WE), c(1, 3:5, 2)]
 FstComp <- apply(FstComp, 1, function(x) {
   gsub("EA_WE|AF_EA|AF_WE", "+", x)
-})
-knitr::kable(t(FstComp), format = "latex")
+}) %>% t() %>% as.data.table()
+knitr::kable(FstComp, format = "latex")
 
 
 # ### 100 SNP Fst windows
@@ -142,9 +146,31 @@ knitr::kable(ihsComp, format = "latex")
   ehh_Comp <- apply(ehh_Comp, 1, function(x) {
     x <- gsub("0", "NA", x)
     gsub("2|1", "+", x)
-  }) %>% t()
+  }) %>% t() %>% as.data.table()
 
 ehh_Comp
+ehh_Comp[ AF_WE == "+", ] %>% nrow()
+ehh_Comp[ EA_WE == "+", ] %>% nrow()
+
 knitr::kable(ehh_Comp, format = "latex")
+
+############################################################
+# XPEHH and Fst
+tmp_Fst <- rbind(AF_EA.HFst.KB, AF_WE.HFst.KB, EA_WE.HFst.KB) %>% setkey(start, end)
+tmp_EHH <- rbind(AF_EA.ehh.selSNP, AF_WE.ehh.selSNP, EA_WE.ehh.selSNP) %>% setkey(start, end)
+res <- foverlaps(tmp_Fst, tmp_EHH, nomatch = 0, type = "any") 
+
+res[, .N, pop]
+res[, .N, stat]
+res[, .N, i.pop]
+res[, .N, i.stat]
+res[, .N, i.start]
+
+comb_reg <- res[, c(1:4)] %>% setkey(start, end)
+comb_reg <- res[, .(start = i.start, end = i.end, pop = i.pop, stat = i.stat)] %>% setkey(start, end)
+
+foverlaps(comb_reg, gtf, type = "any", nomatch = 0)
+foverlaps(comb_reg, gtf, type = "any", nomatch = 0)
+
 ```
 
